@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+#
+# gnodes - shows a graphical overview of a Slurm cluster
+#
+# Copyright 2015 Anders Halager <aeh@birc.au.dk>
+#
+# LICENSE: MIT
+"""
+gnodes provdies a graphical overview of a Slurm cluster
+
+Usage:
+    gnodes <search terms>
+
+Output:
+    All partitions and the nodes in them. Each node shows available
+    memory and a symbol for each core in the machine.
+    The meaning of each type of symbol is described in the following
+    table:
+
+    Symbol | Meaning
+         . | Available core
+         _ | Allocated core
+         O | Loaded core
+         ! | Load is significantly higher than allocated core count
+         ? | Load is unknown
+
+    If a node contains GPUs they will get their own symbols after the symbols
+    for the cores.
+    The symbols for GPUs are as follows:
+
+    Symbol | Meaning
+         * | Unallocated GPU
+         G | Allocated GPU
+
+    Search terms are regular expressions that match on node name and
+    users/ids of running jobs. If anything matches the node will be
+    visually highlighted.
+
+Input environment variables:
+    GNODES_IGNORE   Regex for partitions to hide
+"""
+
+import os, sys
+import re
+import subprocess
+import grp
+from argparse import ArgumentParser
+from math import floor
+from collections import namedtuple
+from itertools import groupby, chain
+
+try:
+    from hostlist import expand_hostlist
+except:
+    # If the hostlist module isn't available we use a small homebrewed version.
+    # Limited to simple patterns like prefix[01-08,10] and not more complex
+    # patterns like a[10-20]b[10-20].
+    def expand_hostlist(hostlist):
+        return chain.from_iterable(_expand_hostlist(hostlist))
+    def _expand_hostlist(hostlist):
+        in_bracket = p_beg = p_end = 0
+        for i, c in enumerate(hostlist):
+            if not in_bracket and c == ",":
+                yield _expand_part(hostlist[p_beg:p_end])
+                p_beg, p_end = i+1, i
+            p_end += 1
+            in_bracket += int(c == "[") + -1*int(c == "]")
+        yield _expand_part(hostlist[p_beg:p_end])
+    def _expand_part(p):
+        if "[" in p:
+            r_beg, r_end, prefix = p.index("["), p.index("]"), p[:p.index("[")]
+            for sub_r in p[r_beg+1:r_end].split(","):
+                if "-" not in sub_r:
+                    yield prefix + sub_r
+                else:
+                    lo,hi = sub_r.split("-", 1)
+                    for i in range(int(lo), int(hi)+1):
+                        yield prefix + str(i).zfill(len(lo))
+        else:
+            yield p
+
+NodeMeta = namedtuple('NodeMeta', 'load alloc_cores total_cores alloc_mem total_mem alloc_gpus total_gpus state')
+JobMeta  = namedtuple('JobMeta',  'job_ids job_usernames job_accounts job_groups')
+Group    = namedtuple('Group',    'partition total_cores total_mem gpus')
+
+# Symbols:
+CPU_IDLE    = '.'
+CPU_ALLOC   = '_'
+CPU_USE     = 'O'
+CPU_OVERUSE = '!'
+CPU_UNKNOWN = '?'
+GPU_ALLOC   = 'G'
+GPU_IDLE    = '*'
+
+PARTITION_CMD = ['scontrol', 'show', 'partition', '-a', '--oneliner']
+NODE_CMD = ['scontrol', 'show', 'node', '-a', '--oneliner']
+JOB_CMD = ['squeue', "--format=%i;%t;%u;%N;%P;%a", '--states=R', '--noheader', '-a']
+
+NODENAME_MATCHED   = "\033[7m%s\033[0m"
+NODENAME_UNMATCHED = "%s"
+
+def format_default_partition(s):
+    return "\033[1m%s\033[0m" % s
+def format_normal_partition(s):
+    return s
+
+GNODES_SHORT_HEADER = os.environ.get("GNODES_SHORT_HEADER", None)
+GNODES_IGNORE = re.compile(os.environ.get("GNODES_IGNORE", '$^'))
+
+def is_float(x):
+    try:
+        y = float(x)
+        return True
+    except ValueError:
+        return False
+
+UNKNOWN     =  1 # Node is in an unknown state
+NO_NEW      =  2 # Node is not accepting new jobs (but might still have some)
+DOWN        =  4 # Node is down
+RESERVED    =  8 # Node is reserved
+MAINTENANCE = 16 # Node is reserved specifically for maintenance
+PLANNED     = 32 # Node is planned for use by a multinode job
+
+def parse_state(raw):
+    res = 0
+    raw = raw.lower()
+    if "unknown" in raw:
+        res |= UNKNOWN
+    if "drain" in raw or "down" in raw:
+        res |= NO_NEW
+    if "*" in raw:
+        res |= NO_NEW
+    if "down" in raw or "not_responding" in raw:
+        res |= DOWN
+    if "maint" in raw or "$" in raw:
+        res |= MAINTENANCE
+    if "planned" in raw or "-" in raw:
+        res |= PLANNED
+    return res
+
+def flag_states(flag, states):
+    return [(state, flag) for state in states.split()]
+
+def make_cpu_bar(meta):
+    mem_available = meta.total_mem - meta.alloc_mem
+    all_mem_used = (mem_available == 0)
+    usage = CPU_UNKNOWN
+    base = CPU_IDLE
+    in_use = 0
+    cores_loaded = 0
+    state_flags = parse_state(meta.state)
+    if state_flags & NO_NEW:
+        base = " " # if not accepting jobs, the cores aren't marked available
+    if state_flags & MAINTENANCE:
+        return 'MAINTENANCE', True
+    elif state_flags & PLANNED:
+        return 'PLANNED', True
+    elif state_flags & RESERVED:
+        return 'RESERVED', True
+    elif (state_flags & DOWN) or (meta.alloc_cores == 0 and state_flags & NO_NEW):
+        return 'DOWN', True
+    elif meta.total_cores == 0 or state_flags & UNKNOWN:
+        return 'UNKNOWN', True
+    elif meta.alloc_cores > 0:
+        in_use = meta.total_cores if all_mem_used else meta.alloc_cores
+        load = meta.load
+        Ls = meta.load
+        if is_float(Ls):
+            Lf = float(Ls)
+            cores_loaded = min(in_use, int(floor(Lf + 0.5)))
+            if Lf > in_use*1.5:
+                usage = CPU_OVERUSE
+            else:
+                usage = CPU_USE
+    A, B, C = (meta.total_cores - in_use, in_use - cores_loaded, cores_loaded)
+    return base*max(0, A) + CPU_ALLOC*max(0, B) + usage*max(0, C), False
+
+def group_id(x):
+    ((node, partition), meta) = x
+    return Group(partition, meta.total_cores, meta.total_mem, meta.total_gpus)
+
+def parse_squeue_mem(s):
+    m = {'K':10,'M':20,'G':30,'T':40,'P':50,'E':60}
+    scale = 2 ** m.get(s[-1], 0)
+    if scale != 1:
+        s = s[:-1]
+    return scale * float(s)
+
+def parse_tres(tres):
+    def get(pattern, default, transform):
+        m = re.search(pattern + "=([^, ]+)", tres)
+        return transform(m.group(1)) if m else default
+
+    cpu = get("cpu",      0, int)
+    mem = get("mem",      0, parse_squeue_mem)
+    gpu = get("gres/gpu", 0, int)
+    return cpu, mem, gpu
+
+def stripped_lines_from_cmd(cmd):
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    for line in p.stdout:
+        yield line.decode("utf-8").strip()
+    p.wait()
+
+def get_output_width(fallback_width):
+    width = fallback_width
+    try:
+        for line in stripped_lines_from_cmd(['tput', 'cols']):
+            width = int(line)
+    except:
+        pass
+    return width
+
+def make_header(partition, max_walltime, ncores, nmem, ngpus, field_width, nfields, default_partition):
+    header_line = " " + '+'.join('-'*(field_width+2) for p in range(nfields))
+    text_long = " - %d cores & %dGB" % (ncores, nmem / 2**30)
+    text_short = " - %dC / %dGB" % (ncores, nmem / 2**30)
+    if ngpus != 0:
+        text_long = text_long + " & %d GPUs" % ngpus
+        text_short = text_short + " / %dGPU" % ngpus
+    if max_walltime != "UNLIMITED":
+        text_long = text_long + " & max time %s" % (max_walltime)
+        text_short = text_short + " / %s" % (max_walltime)
+    if GNODES_SHORT_HEADER:
+        text = text_short
+    else:
+        text = text_long
+    if partition == default_partition:
+        part = format_default_partition(partition)
+    else:
+        part = format_normal_partition(partition)
+    header   = '+- ' + part + text + ' '
+    header_line = header + header_line[len(text)+len(partition)+4:]
+    return '\n' + header_line + '+'
+
+def make_footer(field_width, nfields):
+    footer_line = '+'.join('-'*(field_width+2) for p in range(nfields))
+    return '+' + footer_line + '+'
+
+def clamp(n, lo, hi):
+    return max(lo, min(hi, n))
+
+
+def get_field(pattern, line, default=""):
+    m = re.search(pattern + "=([^ ]*)", line)
+    return m.group(1) if m else default
+
+
+def main(partitions, groups, accounts, search_pattern):
+    use_colors = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+    node_meta = {}
+    node_job_meta = {}
+    default_partition = ""
+    partition_walltimes = dict()
+    partition_max_cpus = dict()
+
+    user_groups = dict()
+    for group in grp.getgrall():
+        for member in group.gr_mem:
+            user_groups.setdefault(member, set()).add(group.gr_name)
+
+    for line in stripped_lines_from_cmd(PARTITION_CMD):
+        partition = get_field("PartitionName", line)
+        partition_walltimes[partition] = get_field("MaxTime", line)
+        max_cpus = get_field("MaxCPUsPerNode", line, "UNLIMITED")
+        max_cpus = int(max_cpus) if max_cpus != "UNLIMITED" else 1000000
+        partition_max_cpus[partition] = max_cpus
+        if get_field("Default", line) == "YES":
+            default_partition = partition
+
+    for line in stripped_lines_from_cmd(NODE_CMD):
+        node = get_field("NodeName", line)
+        state = get_field("State", line)
+        tres_total = get_field("CfgTRES", line)
+        tres_alloc = get_field("AllocTRES", line)
+        node_partitions = get_field("Partitions", line)
+        cpu_load = get_field("CPULoad", line, "N/A")
+
+        total_cores, total_mem, total_gpus = parse_tres(tres_total)
+        alloc_cores, alloc_mem, alloc_gpus = parse_tres(tres_alloc)
+        cpu_load = 0.0 if cpu_load == "N/A" else float(cpu_load)
+
+        if node_partitions == '':
+            continue
+
+        for partition in node_partitions.split(","):
+            total_cores = min(partition_max_cpus[partition], total_cores)
+            node_meta[(node,partition)] = NodeMeta(cpu_load, alloc_cores, total_cores, alloc_mem, total_mem, alloc_gpus, total_gpus, state)
+        node_job_meta[node] = JobMeta(set(), set(), set(), set())
+
+    for line in stripped_lines_from_cmd(JOB_CMD):
+        jobid,state,user,nodes,partition,account = line.split(';')
+        for n in expand_hostlist(nodes):
+            node_job_meta[n].job_ids.add(jobid)
+            node_job_meta[n].job_usernames.add(user)
+            node_job_meta[n].job_accounts.add(account)
+            node_job_meta[n].job_groups.update(user_groups.get(user, set()))
+
+    screen_width = get_output_width(80)
+    screen_width = int(screen_width) - 1
+
+    for k,g in groupby(sorted(node_meta.items(), key=group_id), key=group_id):
+        if len(partitions) > 0:
+            if k.partition not in partitions:
+                continue
+        elif GNODES_IGNORE.search(k.partition):
+            continue
+
+        info_fields = []
+        name_patterns = []
+        for (node,partition),meta in sorted(g):
+            job_meta = node_job_meta[node]
+            search_target = job_meta.job_ids | job_meta.job_usernames | job_meta.job_accounts | job_meta.job_groups | set([node])
+            highlight = any(search_pattern.search(x) != None for x in search_target) \
+                    or len(accounts & job_meta.job_accounts) > 0 \
+                    or len(groups & job_meta.job_groups) > 0
+            mem_available = meta.total_mem - meta.alloc_mem
+            bar, is_unavailable = make_cpu_bar(meta)
+            if meta.alloc_cores == meta.total_cores:
+                mem_available = 0
+            if meta.total_gpus > 0 and is_unavailable:
+                gpu_usage = " " + " "*meta.total_gpus
+            elif meta.total_gpus > 0:
+                gpu_usage = " " + GPU_IDLE*(meta.total_gpus - meta.alloc_gpus) + GPU_ALLOC*meta.alloc_gpus
+            else:
+                gpu_usage = ""
+            info = "%-6s %4.0fG  %s%s" % (node, mem_available / (2**30), bar.center(meta.total_cores), gpu_usage)
+            info_fields.append(info)
+            name_patterns.append(NODENAME_MATCHED if highlight else NODENAME_UNMATCHED)
+        max_field_width = max(len(i) for i in info_fields)
+        fields_per_row = clamp(int(screen_width / (max_field_width + 3)), 1, len(info_fields))
+        fields_in_last_row = len(info_fields) % fields_per_row
+        if fields_in_last_row != 0:
+            dummy_fields = fields_per_row - fields_in_last_row
+            info_fields.extend([" "*max_field_width]*dummy_fields)
+            name_patterns.extend([NODENAME_UNMATCHED]*dummy_fields)
+        rows = int(floor(len(info_fields) / fields_per_row))
+        print(make_header(
+                k.partition, partition_walltimes[k.partition], k.total_cores, k.total_mem, k.gpus,
+                max_field_width, fields_per_row, default_partition))
+        for r in range(0, rows):
+            print("| %s |" % " | ".join(pat % s for pat,s in list(zip(name_patterns, info_fields))[r::rows]))
+        print(make_footer(max_field_width, fields_per_row))
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser(usage=__doc__)
+    parser.add_argument("search", metavar="SEARCH", help="Regular expression search terms for node/user(s)", nargs='*')
+    parser.add_argument("-p", "--partition", metavar="PARTITION", dest="partitions", help="Only show nodes for partition", action="append", default=list())
+    parser.add_argument("-g", "--group", metavar="GROUP", dest="groups", help="Highlight nodes with jobs from a member of the group", action="append", default=list())
+    parser.add_argument("-a", "--account", metavar="ACCOUNT", dest="accounts", help="Highlight nodes with jobs running under the account", action="append", default=list())
+    args = parser.parse_args()
+
+    if args.search:
+        pattern = re.compile('|'.join("(^%s$)" % p for p in args.search))
+        searching = True
+    else:
+        pattern = re.compile('$^')
+        searching = False
+
+    main(args.partitions, set(args.groups), set(args.accounts), pattern)

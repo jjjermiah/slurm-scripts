@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+## script that is just to print available scripts from the slurm-scripts 
+
+script_dir=$(dirname $(whereis $0 | awk '{print $NF}'))
+FILES=$(ls $script_dir)
+echo $FILES
+if [ -z "$FILES" ]; then
+	printf "\e[31mError: No files found in directory\e[0m\n"
+else
+	printf "\nAvailable Commands:\n"
+fi
+
+
+for f in $FILES
+do
+	printf "\t\e[32m%s\e[0m\n" $f
+done
+

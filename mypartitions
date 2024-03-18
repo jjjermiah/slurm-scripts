@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+# mypartitions
+
+# Display allowed partitions based on user's Slurm accounts
+
+set -e -o pipefail
+
+if [[ -z $1 ]]; then
+    user=$USER
+else
+    user=$1
+    # Check if user exists
+    if [[ "$(id $user 2>&1)" = *"no such user"* ]]; then
+        printf "%s\n" "No such user: $user"
+        exit 1
+    fi
+fi
+
+if [[ $HOSTNAME == *"h4huhnlogin1.uhnh4h.cluster"* ]]; then
+    printf "%s\n" "-----------------------------------------------------"
+    printf "%s\n" "Allowed Discovery partitions for $user"
+    printf "%s\n" "-----------------------------------------------------"
+    scontrol show partition -o |
+        grep -o "^PartitionName=[a-z 0-9 \-]*"
+elif [[ $HOSTNAME == *"h4huhndata1.uhnh4h.cluster"* ]]; then
+    printf "%s\n" "Can't view partitions on data node. Enter login node and try again. Exiting.." 
+else
+    exit 1
+fi
