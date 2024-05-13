@@ -3,83 +3,81 @@
 # jobhist
 
 # Display a compact history of user's jobs with basic job information
-# Default setting is to display job history for past 7 days
+# Default setting is to display job history for the past 7 days
 # Based on output from sacct
 
-set -e -o pipefail
+set -euo pipefail
 
 # ANSI color codes
-RED='\033[0;31m'; 
-BLUE='\033[0;34m'; B='\033[0;34m';
-GREEN='\033[0;32m'; G='\033[0;32m';
-YELLOW='\033[0;33m'; Y='\033[0;33m';
-PURPLE='\033[0;35m'; P='\033[0;35m'; 
-RESET='\033[0m'; R='\033[0m';
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+PURPLE='\033[0;35m'
+RESET='\033[0m'
 
-# set default
-
-DAYS=1
+# Set default values
+DAYS=7
 user=$USER
 
-#  Define options
-while (( "$#" )); do
-    case $1 in 
+# Define options
+while [[ $# -gt 0 ]]; do
+    case $1 in
         -h | --help)
-            printf "$G%s$R\t%s\n" "Usage: $(basename $0)" "[OPTIONS]"
-            printf "\t$G%s$R\n" "-h, --help"  
-            printf "\t$G%s\t$R%s\n" "-d, --days" "number of days to list jobs from" 
-            printf "\t$G%s\t$R%s\n" "-u, --user" "user whose jobs to list"
+            printf "%s\t%s\n" "Usage: $(basename "$0")" "[OPTIONS]"
+            printf "\t%s\n" "-h, --help"
+            printf "\t%s\t%s\n" "-d, --days" "number of days to list jobs from"
+            printf "\t%s\t%s\n" "-u, --user" "user whose jobs to list"
             exit 0
             ;;
         -d | --days)
-            if [[ $2 =~ ^[0-9]+$ && $2 -ge 1 ]]; then 
+            if [[ $2 =~ ^[0-9]+$ && $2 -ge 1 ]]; then
                 DAYS=$2
-                echo "thanks for Days $DAYS"
+                echo "Thanks for specifying $DAYS days"
             else
-                printf "${RED}%s$R%s\n" "ERROR: " "days must be a positive integer"
+                printf "${RED}%s%s\n" "ERROR: " "days must be a positive integer"
                 exit 1
             fi
-            shift; shift; 
+            shift 2
             ;;
         -u | --user)
-            if [[ $2 =~ [[:alpha:]] || $2 -lt 1 ]]; then
+            if [[ $2 =~ ^[[:alnum:]]+$ ]]; then
                 user=$2
             else
-                printf "${RED}%s$R%s\n" "ERROR: " "user must be a alphanumeric string"
+                printf "${RED}%s%s\n" "ERROR: " "user must be an alphanumeric string"
+                exit 1
             fi
-            shift; shift;
-            ;; 
+            shift 2
+            ;;
         -* | --*=) # unsupported flags
             echo -e "${RED}Error: Unsupported flag $1${RESET}" >&2
             # rerun the script with --help
-            $0 --help
+            "$0" --help
             exit 1
             ;;
         *) # preserve positional arguments
-            PARAMS="$PARAMS $1"
+            PARAMS+=("$1")
             shift
-            ;; 
+            ;;
     esac
 done
 
-
-if [[ -z $2 ]]; then
-    user=$USER
-else
-    user=$2
-    # Check if user exists
-    if [[ "$(id $user 2>&1)" = *"no such user"* ]]; then
-        printf "%s\n" "No such user: $user"
-        exit 1
-    fi
+# Check if user exists
+if ! id -u "$user" >/dev/null 2>&1; then
+    printf "%s\n" "No such user: $user"
+    exit 1
 fi
 
 # Set sacct format
-format=Start,jobid%13,jobname%12,partition,state,elapsed%11,nnodes%5,ncpus%4,reqmem%8,reqtres%-50
+format="Start,jobid%13,jobname%12,partition,state,elapsed%11,nnodes%5,ncpus%4,reqmem%8,reqtres%-50"
 
 printf "%s\n" "---------------------------------------------------------------------------------------------------------"
 printf "%s\n" "          Startdate        Job ID     Job Name  Partition      State     Elapsed Nodes CPUs   Memory GPUs"
 printf "%s\n" "------------------- ------------- ------------ ---------- ---------- ----------- ----- ---- -------- ----"
-sacct --noheader -X -o $format -u $user -S $(date --date="-$DAYS day" +%Y-%m-%d) |
-    # Extract number of GPUs requested
+
+# Calculate the start date
+start_date=$(date --date="-${DAYS} day" +%Y-%m-%d)
+
+# Run sacct command and extract number of GPUs requested
+sacct --noheader -X -o "$format" -u "$user" -S "$start_date" |
     sed -r 's/billing=.*gres\/gpu=([^,]*),.*/\1/; s/billing=.*/0/'

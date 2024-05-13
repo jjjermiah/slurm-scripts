@@ -2,43 +2,37 @@
 
 # cqueue
 
-set -eu -o pipefail
+set -euo pipefail
 
 help() {
     # Display help information
-    printf "%s\n" "cqueue / Display job queue information"
-    printf "%s\n" ""
-    printf "%s\n" "Usage: cqueue [-h] [-p <partition>] [-u <username>]"
-    printf "%s\n" ""
-    printf "%s\n" "Options:"
-    printf "%s\n" ""
-    printf "%s\n" "-h  Display help"
-    printf "%s\n" ""
-    printf "%s\n" "-p  Filter partitions"
-    printf "%s\n" ""
-    printf "%s\n" "    * Default value shows all partitions"
-    printf "%s\n" "    * Multiple partitions can be specified with comma separation"
-    printf "%s\n" ""
-    printf "%s\n" "-u  Filter users"
-    printf "%s\n" ""
-    printf "%s\n" "    * Default value shows all users"
-    printf "%s\n" "    * Multiple users can be specified with comma separation"
-    printf "%s\n" ""
-    printf "%s\n" "Examples:"
-    printf "%s\n" ""
-    printf "%s\n" "  cqueue"
-    printf "%s\n" "  cqueue -h"
-    printf "%s\n" "  cqueue -p epyc-64"
-    printf "%s\n" "  cqueue -u user1"
-    printf "%s\n" "  cqueue -p main -u user1"
-    printf "%s\n" "  cqueue -p main,gpu -u user1,user2"
+    cat << EOF
+cqueue - Display job queue information
+
+Usage: cqueue [-h] [-p <partition>] [-u <username>]
+
+Options:
+  -h  Display help
+  -p  Filter partitions
+      * Default value shows all partitions
+      * Multiple partitions can be specified with comma separation
+  -u  Filter users
+      * Default value shows all users
+      * Multiple users can be specified with comma separation
+
+Examples:
+  cqueue
+  cqueue -h
+  cqueue -p epyc-64
+  cqueue -u user1
+  cqueue -p main -u user1
+  cqueue -p main,gpu -u user1,user2
+EOF
 }
 
 # Set default values for option arguments
-users=
-partitions=
-# There is no all value for squeue --user or --partition options, so leave blank
-# See if statement below
+users=""
+partitions=""
 
 # Set squeue format
 format="%12i %.10u %.12j %.10P %.8T %.11M %.20R"
@@ -53,42 +47,42 @@ while getopts ":hp:u:" option; do
       p) # select partitions
          partitions=$OPTARG
          if [[ $partitions =~ ^- ]]; then
-           printf "%s\n" "Error: Invalid argument to option -p"
+           echo "Error: Invalid argument to option -p" >&2
            exit 1
          fi
          ;;
       u) # select users
          users=$OPTARG
          if [[ $users =~ ^- ]]; then
-           printf "%s\n" "Error: Invalid argument to option -u"
+           echo "Error: Invalid argument to option -u" >&2
            exit 1
          fi
          ;;
       \?) # invalid argument
-         printf "%s\n" "Error: Invalid option -$OPTARG" >&2
+         echo "Error: Invalid option -$OPTARG" >&2
          exit 1
          ;;
    esac
 done
 
-printf "%s\n" "-----------------------------------------------------------------------------------------"
-printf "%s\n" "      Job ID       User     Job Name  Partition    State     Elapsed     Nodelist(Reason)"
-printf "%s\n" "------------ ---------- ------------ ---------- -------- ----------- --------------------"
+echo "-----------------------------------------------------------------------------------------"
+echo "      Job ID       User     Job Name  Partition    State     Elapsed     Nodelist(Reason)"
+echo "------------ ---------- ------------ ---------- -------- ----------- --------------------"
 
-if [[ $partitions = "" ]]; then
-    if [[ $users = "" ]]; then
+if [[ -z $partitions ]]; then
+    if [[ -z $users ]]; then
         # List all users and all partitions
         squeue -h -o "$format"
     else
         # List specified users and all partitions
-        squeue -h -o "$format" -u $users
+        squeue -h -o "$format" -u "$users"
     fi
 else
-    if [[ $users = "" ]]; then
+    if [[ -z $users ]]; then
         # List all users and specified partitions
-        squeue -h -o "$format" -p $partitions
+        squeue -h -o "$format" -p "$partitions"
     else
         # List specified users and specified partitions
-        squeue -h -o "$format" -u $users -p $partitions
+        squeue -h -o "$format" -u "$users" -p "$partitions"
     fi
 fi
