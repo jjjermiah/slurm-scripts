@@ -1,5 +1,7 @@
 # Repository of useful Slurm tools
 
+Wrappers around Slurm commands to make them more user-friendly and provide additional functionality.
+
 ## Setup and Installation
 
 ```bash
@@ -7,8 +9,136 @@ git clone ....
 cd slurm-scripts
 ```
 
+add the directory to your PATH
 
-## `gnodes`
+```bash
+export PATH=$PATH:$PWD
+```
+
+to make it permanent add the above line to your `.bashrc` or `.bash_profile` file
+
+```bash
+echo 'export PATH=$PATH:$PWD' >> ~/.bashrc
+```
+
+The commands will be available in your terminal after you restart it or run the following command
+  
+```bash
+source ~/.bashrc
+```
+
+## Features
+
+To see a list of available commands, run the following command:
+
+```bash
+# alternatively, you can run <path-to-slurm-scripts>/slurm-scripts
+❯ slurm-scripts
+
+Available Commands found:
+        acctusage
+        cqueue
+        gnodes
+        gpuinfo
+        jobhist
+        jobinfo
+        myaccount
+        mypartitions
+        myqueue
+        nodeinfo
+        qalloc
+        qbuild
+        slurm-scripts
+```
+
+
+## 1)  `acctusage`
+
+The `acctusage` is a shell script that reports Slurm account usage by users or accounts
+- It provides options to specify users, project accounts, start date/time, and end date/time
+- The script retrieves account usage information from Slurm and displays it in a formatted table, including login, accounts, cluster, resource, and usage
+- It also provides CPU/GPU usage in minutes
+- The script is designed to be run from the command line and provides a help option to display usage information
+
+```bash
+❯ acctusage
+--------------------------------------------------------------------
+Slurm account usage from 2024-05-06 to 2024-05-13
+--------------------------------------------------------------------
+     User         Account   Cluster       Resource             Usage
+--------- --------------- --------- -------------- -----------------
+t119797u+          bhklab    h4huhn            cpu      155 
+t119797u+          bhklab    h4huhn       gres/gpu        0 
+t119797u+          bhklab    h4huhn            mem    39744 
+t119797u+          bhklab    h4huhn        billing      155 
+--------------------------------------------------------------------
+*CPU/GPU usage in minutes
+```
+
+#### Usage
+
+To use the `acctusage` script, you can run it from the command line with the following syntax:
+
+```
+acctusage [-h] [-u <users>] [-a <accounts>] [-s <startdate>] [-e <enddate>]
+```
+
+Here are the options and their descriptions:
+
+- `-h`: Display help
+- `-u`: Specify users
+  - When only using users option, default value is current user
+  - When only using accounts option, default value is all users in accounts
+  - Multiple users can be specified with comma separation
+- `-a`: Specify project accounts
+  - When only using users option, default value is all accounts
+  - When only using accounts option, default value is all users in accounts
+  - Multiple accounts can be specified with comma separation
+- `-s`: Specify start date/time
+  - Default value is 7 days ago
+- `-e`: Specify end date/time
+  - Default value is current date/time
+
+
+## 2) `cqueue`
+
+The `cqueue` script is a utility that displays job queue information. 
+
+- It provides options to filter the output based on partitions and users. 
+- The script uses the `squeue` command to retrieve the job queue information.
+- The output includes job ID, user, partition, name, state, time, nodes, and reason.
+
+```bash
+❯ cqueue
+-----------------------------------------------------------------------------------------
+      Job ID       User     Job Name  Partition    State     Elapsed     Nodelist(Reason)
+------------ ---------- ------------ ---------- -------- ----------- --------------------
+11716027     t119797uhn /cluster/pro        all  PENDING        0:00          (BeginTime)
+11716028     t119797uhn /cluster/hom        all  PENDING        0:00          (BeginTime)
+```
+
+#### Usage
+
+To use the `cqueue` script, you can run it from the command line with the following syntax:
+
+```
+cqueue [-h] [-p <partitions>] [-u <users>]
+```
+
+Here are the options and their descriptions:
+
+- `-h`: Display help
+- `-p`: Specify partitions
+  - When only using partitions option, default value is all partitions
+  - When only using users option, default value is all users in partitions
+  - Multiple partitions can be specified with comma separation
+- `-u`: Specify users
+  - When only using users option, default value is current user
+  - When only using partitions option, default value is all partitions
+  - Multiple users can be specified with comma separation
+
+
+## 3) `gnodes`
 
 The `gnodes` app is a shell script that reports Slurm node information.
 
@@ -64,94 +194,60 @@ gnodes -p himem
 +---------------------------------------------------------------------------------------------------------------+
 ```
 
+## 4) `gpuinfo`
 
-## `acctusage`
+The `gpuinfo` script is a utility that displays GPU information.
 
-The `acctusage` is a shell script that reports Slurm account usage by users or accounts
-- It provides options to specify users, project accounts, start date/time, and end date/time
-- The script retrieves account usage information from Slurm and displays it in a formatted table, including login, accounts, cluster, resource, and usage
-- It also provides CPU/GPU usage in minutes
-- The script is designed to be run from the command line and provides a help option to display usage information
+- It provides options to filter the output based on GPU IDs and states.
+- The script uses the `sinfo` command to retrieve the GPU information.
+- The output includes GPU ID, state, memory, and partition.
 
 ```bash
-❯ acctusage
---------------------------------------------------------------------
-Slurm account usage from 2024-05-06 to 2024-05-13
---------------------------------------------------------------------
-     User         Account   Cluster       Resource             Usage
---------- --------------- --------- -------------- -----------------
-t119797u+          bhklab    h4huhn            cpu      155 
-t119797u+          bhklab    h4huhn       gres/gpu        0 
-t119797u+          bhklab    h4huhn            mem    39744 
-t119797u+          bhklab    h4huhn        billing      155 
---------------------------------------------------------------------
-*CPU/GPU usage in minutes
+❯ gpuinfo
+------------------------------------------------
+Slurm GPU information
+------------------------------------------------
+There are a total of 75 GPUs [up]
+4 a40 gpus
+8 a100 gpus
+31 p100 gpus
+32 v100 gpus
+------------------------------------------------
+There are a total of 75 GPUs [accessible]
+4 a40 gpus
+8 a100 gpus
+31 p100 gpus
+32 v100 gpus
+------------------------------------------------
+Usage by user:
+None
+------------------------------------------------
+There are a total of 75 GPUs [available]
+a100: 8 available 
+v100: 32 available 
+p100: 31 available 
+a40: 4 available 
+------------------------------------------------
+
 ```
 
 #### Usage
 
-To use the `acctusage` script, you can run it from the command line with the following syntax:
-
-```
-acctusage [-h] [-u <users>] [-a <accounts>] [-s <startdate>] [-e <enddate>]
-```
-
-Here are the options and their descriptions:
-
-- `-h`: Display help
-- `-u`: Specify users
-  - When only using users option, default value is current user
-  - When only using accounts option, default value is all users in accounts
-  - Multiple users can be specified with comma separation
-- `-a`: Specify project accounts
-  - When only using users option, default value is all accounts
-  - When only using accounts option, default value is all users in accounts
-  - Multiple accounts can be specified with comma separation
-- `-s`: Specify start date/time
-  - Default value is 7 days ago
-- `-e`: Specify end date/time
-  - Default value is current date/time
-
-
-## `cqueue`
-
-The `cqueue` script is a utility that displays job queue information. 
-
-- It provides options to filter the output based on partitions and users. 
-- The script uses the `squeue` command to retrieve the job queue information.
-- The output includes job ID, user, partition, name, state, time, nodes, and reason.
+To use the `gpuinfo` script, you can run it from the command line with the following syntax:
 
 ```bash
-❯ cqueue
------------------------------------------------------------------------------------------
-      Job ID       User     Job Name  Partition    State     Elapsed     Nodelist(Reason)
------------- ---------- ------------ ---------- -------- ----------- --------------------
-11716027     t119797uhn /cluster/pro        all  PENDING        0:00          (BeginTime)
-11716028     t119797uhn /cluster/hom        all  PENDING        0:00          (BeginTime)
-```
-
-#### Usage
-
-To use the `cqueue` script, you can run it from the command line with the following syntax:
-
-```
-cqueue [-h] [-p <partitions>] [-u <users>]
+usage: gpuinfo [-h] [-p PARTITION] [-v]
 ```
 
 Here are the options and their descriptions:
 
 - `-h`: Display help
 - `-p`: Specify partitions
-  - When only using partitions option, default value is all partitions
-  - When only using users option, default value is all users in partitions
-  - Multiple partitions can be specified with comma separation
-- `-u`: Specify users
-  - When only using users option, default value is current user
-  - When only using partitions option, default value is all partitions
-  - Multiple users can be specified with comma separation
+- `-v`: Verbose output
 
 
-## `jobhist`
+
+## 5) `jobhist`
 
 The `jobhist` script is a utility that displays job history information.
 

@@ -4,7 +4,7 @@
 
 script_dir=$(dirname $(whereis $0 | awk '{print $NF}'))
 FILES=$(ls $script_dir)
-echo $FILES
+# echo $FILES
 if [ -z "$FILES" ]; then
 	printf "\e[31mError: No files found in directory\e[0m\n"
 else
@@ -14,6 +14,9 @@ fi
 
 for f in $FILES
 do
-	printf "\t\e[32m%s\e[0m\n" $f
+	if [ "$f" != "README.md" ]; then
+		printf "\t\e[32m%s\e[0m\n" $f
+	fi
 done
+
 
